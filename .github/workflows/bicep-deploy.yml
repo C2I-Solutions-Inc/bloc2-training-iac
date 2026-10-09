@@ -1,6 +1,8 @@
-name: Bicep stage
+name: Bicep deploy
 
-# Reusable stage called by deploy-bicep.yml: what-if -> approval -> deploy.
+# Reusable stage called by deploy-bicep.yml: deploys to a given environment.
+# Gated by that environment's required-reviewer approval (GitHub environment
+# protection rules).
 on:
   workflow_call:
     inputs:
@@ -24,9 +26,10 @@ env:
   ENVIRONMENT: ${{ inputs.environment }}
 
 jobs:
-  what-if:
-    name: What-if
+  deploy:
+    name: Deploy
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     steps:
       - name: Check configuration
         run: |
@@ -35,38 +38,6 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/download-artifact@v4.3.0
-        with:
-          name: bicep
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: What-if
-        run: |
-          set -euo pipefail
-          az deployment group what-if \
-            --resource-group "$RESOURCE_GROUP" \
-            --template-file "$TEMPLATE_FILE" \
-            --parameters "@$PARAMETERS_FILE" \
-            | tee "$RUNNER_TEMP/what-if.txt"
-          {
-            echo "### Bicep what-if: $ENVIRONMENT (\`$RESOURCE_GROUP\`)"
-            echo '```'
-            sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/what-if.txt"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  deploy:
-    name: Deploy
-    needs: what-if
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    steps:
       - uses: actions/download-artifact@v4.3.0
         with:
           name: bicep
