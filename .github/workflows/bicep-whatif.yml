@@ -25,6 +25,7 @@ env:
   PARAMETERS_FILE: ${{ inputs.environment }}.parameters.json
   RESOURCE_GROUP: ${{ inputs.resource-group }}
   ENVIRONMENT: ${{ inputs.environment }}
+  LOCATION: canadaeast
 
 jobs:
   what-if:
@@ -52,10 +53,11 @@ jobs:
       - name: What-if
         run: |
           set -euo pipefail
-          az deployment group what-if \
-            --resource-group "$RESOURCE_GROUP" \
+          az deployment sub what-if \
+            --location "$LOCATION" \
             --template-file "$TEMPLATE_FILE" \
             --parameters "@$PARAMETERS_FILE" \
+            --parameters resourceGroupName="$RESOURCE_GROUP" location="$LOCATION" \
             | tee "$RUNNER_TEMP/what-if.txt"
           {
             echo "### Bicep what-if: $ENVIRONMENT (\`$RESOURCE_GROUP\`)"

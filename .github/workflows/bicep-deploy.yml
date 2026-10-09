@@ -24,6 +24,7 @@ env:
   PARAMETERS_FILE: ${{ inputs.environment }}.parameters.json
   RESOURCE_GROUP: ${{ inputs.resource-group }}
   ENVIRONMENT: ${{ inputs.environment }}
+  LOCATION: canadaeast
 
 jobs:
   deploy:
@@ -52,11 +53,12 @@ jobs:
       - name: Deploy
         run: |
           set -euo pipefail
-          az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
+          az deployment sub create \
+            --location "$LOCATION" \
             --name "environments-$ENVIRONMENT-$GITHUB_RUN_NUMBER" \
             --template-file "$TEMPLATE_FILE" \
             --parameters "@$PARAMETERS_FILE" \
+            --parameters resourceGroupName="$RESOURCE_GROUP" location="$LOCATION" \
             --query properties.outputs --output json \
             | tee "$RUNNER_TEMP/outputs.json"
           {

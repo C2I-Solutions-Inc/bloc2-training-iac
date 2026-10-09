@@ -58,10 +58,11 @@ jobs:
       - name: What-if (dev)
         run: |
           set -euo pipefail
-          az deployment group what-if \
-            --resource-group "${{ vars.DEV_RESOURCE_GROUP }}" \
+          az deployment sub what-if \
+            --location canadaeast \
             --template-file "$RUNNER_TEMP/bicep/environments.json" \
             --parameters "@$RUNNER_TEMP/bicep/dev.parameters.json" \
+            --parameters resourceGroupName="${{ vars.DEV_RESOURCE_GROUP }}" location=canadaeast \
             | tee "$RUNNER_TEMP/what-if.txt"
 
       - name: Post what-if as PR comment

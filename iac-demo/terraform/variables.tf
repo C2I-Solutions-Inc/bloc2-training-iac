@@ -7,14 +7,14 @@ variable "storage_account_name" {
 }
 
 variable "resource_group_name" {
-  description = "Existing resource group that holds the storage account."
+  description = "Resource group to create (if missing) and deploy into."
   type        = string
   default     = "rg-iac-demo"
 }
 
 variable "location" {
   type    = string
-  default = "canadacentral"
+  default = "canadaeast"
 }
 
 variable "account_replication_type" {
