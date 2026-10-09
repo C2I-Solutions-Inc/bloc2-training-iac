@@ -1,0 +1,96 @@
+name: Bicep stage
+
+# Reusable stage called by deploy-bicep.yml: what-if -> approval -> deploy.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment and parameter file name (vars/<environment>.bicepparam)
+        type: string
+        required: true
+      resource-group:
+        description: Existing resource group to deploy into
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TEMPLATE_FILE: environments.json
+  PARAMETERS_FILE: ${{ inputs.environment }}.parameters.json
+  RESOURCE_GROUP: ${{ inputs.resource-group }}
+  ENVIRONMENT: ${{ inputs.environment }}
+
+jobs:
+  what-if:
+    name: What-if
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check configuration
+        run: |
+          if [[ -z "$RESOURCE_GROUP" ]]; then
+            echo "::error::Resource group variable for '$ENVIRONMENT' is not set. See README.md."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: bicep
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: What-if
+        run: |
+          set -euo pipefail
+          az deployment group what-if \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file "$TEMPLATE_FILE" \
+            --parameters "@$PARAMETERS_FILE" \
+            | tee "$RUNNER_TEMP/what-if.txt"
+          {
+            echo "### Bicep what-if: $ENVIRONMENT (\`$RESOURCE_GROUP\`)"
+            echo '```'
+            sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/what-if.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy
+    needs: what-if
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: bicep
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "environments-$ENVIRONMENT-$GITHUB_RUN_NUMBER" \
+            --template-file "$TEMPLATE_FILE" \
+            --parameters "@$PARAMETERS_FILE" \
+            --query properties.outputs --output json \
+            | tee "$RUNNER_TEMP/outputs.json"
+          {
+            echo "### Bicep deployment outputs: $ENVIRONMENT"
+            echo '```json'
+            cat "$RUNNER_TEMP/outputs.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

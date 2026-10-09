@@ -1,0 +1,72 @@
+name: Deploy Terraform
+
+# Validate once, then promote the same artifact through dev and prod.
+# Each stage runs terraform plan, waits for approval (GitHub environment protection
+# rules), then applies exactly the reviewed plan. Configuration lives in GitHub
+# variables and one secret; see README.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iac-demo/terraform-comparison
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terraform
+          path: |
+            iac-demo/terraform-comparison
+            !iac-demo/terraform-comparison/.terraform
+          include-hidden-files: true
+          if-no-files-found: error
+
+  dev:
+    name: Dev
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-stage.yml
+    with:
+      environment: dev
+      resource-group: ${{ vars.DEV_RESOURCE_GROUP }}
+    secrets: inherit
+
+  prod:
+    name: Prod
+    needs: dev
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-stage.yml
+    with:
+      environment: prod
+      resource-group: ${{ vars.PROD_RESOURCE_GROUP }}
+    secrets: inherit

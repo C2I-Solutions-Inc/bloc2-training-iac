@@ -1,7 +1,10 @@
 # Find the existing resource ID before importing:
 # az storage account show --resource-group <resource-group> --name <storage-account-name> --query id --output tsv
-# Replace the placeholders and match main.tf to the existing account before applying.
+# Then pass it in and match the other variables to the existing account:
+# terraform plan -var 'import_storage_account_id=<resource-id>'
+# Nothing is imported while the variable is unset (the default).
 import {
-  to = azurerm_storage_account.demo
-  id = "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Storage/storageAccounts/<storage-account-name>"
+  for_each = var.import_storage_account_id == null ? toset([]) : toset([var.import_storage_account_id])
+  to       = azurerm_storage_account.demo
+  id       = each.value
 }

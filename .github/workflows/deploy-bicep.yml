@@ -1,0 +1,75 @@
+name: Deploy Bicep
+
+# Build once, then promote the same artifact through dev and prod.
+# Each stage runs what-if, waits for approval (GitHub environment protection rules),
+# then deploys. Configuration lives in GitHub variables; see README.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iac-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: Lint and build all Bicep files
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            echo "Linting $file"
+            az bicep lint --file "$file"
+            az bicep build --file "$file" --stdout > /dev/null
+          done < <(find . -name '*.bicep' | sort)
+
+      - name: Package deployment artifact
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bicep"
+          az bicep build --file environments.bicep --outfile "$RUNNER_TEMP/bicep/environments.json"
+          for file in vars/*.bicepparam; do
+            name=$(basename "$file" .bicepparam)
+            az bicep build-params --file "$file" --outfile "$RUNNER_TEMP/bicep/$name.parameters.json"
+          done
+          ls -l "$RUNNER_TEMP/bicep"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bicep
+          path: ${{ runner.temp }}/bicep
+          if-no-files-found: error
+
+  dev:
+    name: Dev
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/bicep-stage.yml
+    with:
+      environment: dev
+      resource-group: ${{ vars.DEV_RESOURCE_GROUP }}
+
+  prod:
+    name: Prod
+    needs: dev
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/bicep-stage.yml
+    with:
+      environment: prod
+      resource-group: ${{ vars.PROD_RESOURCE_GROUP }}
