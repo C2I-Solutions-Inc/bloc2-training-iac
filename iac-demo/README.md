@@ -28,9 +28,9 @@ Replace the hardcoded `stbloc2demo2026` name in the CLI, declarative, and Terraf
 
 The examples are alternative approaches, not one combined deployment. Use separate resource groups for dev and prod in a real environment. Deploying multiple storage templates into the same group creates additional accounts. Deployments can incur charges.
 
-### Terraform (1.5 or newer)
+### Terraform (1.7 or newer)
 
-The resource group must already exist. For an existing account, replace the placeholders in `import.tf` with the ID returned by its Azure CLI command, and align `main.tf` with the account's name, group, location, and settings. For a new account, comment out the import block first and choose an unused name.
+The resource group must already exist. The defaults in `variables.tf` describe a single `stbloc2demo2026` account in `rg-iac-demo`; `environments/*.tfvars` hold the dev and prod settings used by the pipeline. To import an existing account, align the variables with the account's name, group, location, and settings, then pass its ID (from the Azure CLI command in `import.tf`) with `-var 'import_storage_account_id=<resource-id>'`. Without that variable nothing is imported, so for a new account just choose an unused name.
 
 ```bash
 cd terraform-comparison
@@ -39,6 +39,6 @@ terraform plan
 terraform apply
 ```
 
-Flip `access_tier` to `"Cool"` to preview a configuration change. To demonstrate **drift**, change the tier outside Terraform, then run `terraform plan` to show how Terraform would restore the declared tier. Keep Terraform state local for this demo and do not commit it; it can contain sensitive values.
+Flip `access_tier` to `"Cool"` (for example `terraform plan -var access_tier=Cool`) to preview a configuration change. To demonstrate **drift**, change the tier outside Terraform, then run `terraform plan` to show how Terraform would restore the declared tier. Keep Terraform state local for this demo and do not commit it; it can contain sensitive values.
 
 After the session, delete only the demo resource groups you created to avoid ongoing charges.

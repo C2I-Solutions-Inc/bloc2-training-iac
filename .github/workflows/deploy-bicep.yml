@@ -1,152 +1,75 @@
 name: Deploy Bicep
 
-# Manually triggered pipeline that validates and deploys the Bicep examples in iac-demo/.
-# Run this first, then run the "Deploy Terraform" pipeline.
+# Build once, then promote the same artifact through dev and prod.
+# Each stage runs what-if, waits for approval (GitHub environment protection rules),
+# then deploys. Configuration lives in GitHub variables; see README.md.
 on:
   workflow_dispatch:
-    inputs:
-      template:
-        description: Which Bicep example to deploy
-        type: choice
-        default: all
-        options:
-          - all
-          - declarative
-          - benefits
-          - environments
-          - module-example
-      environment:
-        description: Parameter file used for environments.bicep (vars/<environment>.bicepparam)
-        type: choice
-        default: dev
-        options:
-          - dev
-          - prod
-      resourceGroup:
-        description: Target resource group (the Terraform example expects rg-iac-demo)
-        type: string
-        default: rg-iac-demo
-      location:
-        description: Azure region
-        type: string
-        default: canadacentral
-      warehouseCode:
-        description: Warehouse code for module-example (letters and numbers, max 9)
-        type: string
-        default: lab1
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
-  group: iac-demo-azure
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
-defaults:
-  run:
-    shell: bash
-    working-directory: iac-demo
-
 jobs:
-  validate:
-    name: Validate Bicep
+  build:
+    name: Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iac-demo
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Bicep CLI
         run: az bicep install
 
-      - name: Build Bicep templates and parameter files
+      - name: Lint and build all Bicep files
         run: |
           set -euo pipefail
           while IFS= read -r file; do
-            echo "Building $file"
+            echo "Linting $file"
+            az bicep lint --file "$file"
             az bicep build --file "$file" --stdout > /dev/null
           done < <(find . -name '*.bicep' | sort)
-          while IFS= read -r file; do
-            echo "Building $file"
-            az bicep build-params --file "$file" --stdout > /dev/null
-          done < <(find . -name '*.bicepparam' | sort)
 
-  deploy:
-    name: Deploy Bicep
-    needs: validate
-    runs-on: ubuntu-latest
-    env:
-      TEMPLATE: ${{ inputs.template }}
-      ENVIRONMENT: ${{ inputs.environment }}
-      RESOURCE_GROUP: ${{ inputs.resourceGroup }}
-      LOCATION: ${{ inputs.location }}
-      WAREHOUSE_CODE: ${{ inputs.warehouseCode }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Create resource group (idempotent)
-        if: inputs.template != 'module-example'
-        run: az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output table
-
-      - name: What-if and deploy
+      - name: Package deployment artifact
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bicep"
+          az bicep build --file environments.bicep --outfile "$RUNNER_TEMP/bicep/environments.json"
+          for file in vars/*.bicepparam; do
+            name=$(basename "$file" .bicepparam)
+            az bicep build-params --file "$file" --outfile "$RUNNER_TEMP/bicep/$name.parameters.json"
+          done
+          ls -l "$RUNNER_TEMP/bicep"
 
-          should_run() { [[ "$TEMPLATE" == "all" || "$TEMPLATE" == "$1" ]]; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bicep
+          path: ${{ runner.temp }}/bicep
+          if-no-files-found: error
 
-          summarize() {
-            {
-              echo "### $1"
-              echo '```json'
-              cat "$2"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-          }
+  dev:
+    name: Dev
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/bicep-stage.yml
+    with:
+      environment: dev
+      resource-group: ${{ vars.DEV_RESOURCE_GROUP }}
 
-          deploy_group() {
-            local name="$1"; shift
-            echo "::group::What-if: $name"
-            az deployment group what-if --resource-group "$RESOURCE_GROUP" --name "$name" "$@"
-            echo "::endgroup::"
-            echo "::group::Deploy: $name"
-            az deployment group create --resource-group "$RESOURCE_GROUP" --name "$name" "$@" \
-              --query properties.outputs --output json | tee "$RUNNER_TEMP/outputs-$name.json"
-            echo "::endgroup::"
-            summarize "$name" "$RUNNER_TEMP/outputs-$name.json"
-          }
-
-          deploy_sub() {
-            local name="$1"; shift
-            echo "::group::What-if: $name"
-            az deployment sub what-if --location "$LOCATION" --name "$name" "$@"
-            echo "::endgroup::"
-            echo "::group::Deploy: $name"
-            az deployment sub create --location "$LOCATION" --name "$name" "$@" \
-              --query properties.outputs --output json | tee "$RUNNER_TEMP/outputs-$name.json"
-            echo "::endgroup::"
-            summarize "$name" "$RUNNER_TEMP/outputs-$name.json"
-          }
-
-          if should_run declarative; then
-            deploy_group declarative --template-file declarative.bicep
-          fi
-
-          if should_run benefits; then
-            deploy_group benefits --template-file benefits.bicep
-          fi
-
-          if should_run environments; then
-            deploy_group "environments-$ENVIRONMENT" --parameters "vars/$ENVIRONMENT.bicepparam"
-          fi
-
-          if should_run module-example; then
-            deploy_sub "module-example-$WAREHOUSE_CODE" \
-              --template-file module-example/main.bicep \
-              --parameters warehouseCode="$WAREHOUSE_CODE" location="$LOCATION"
-          fi
+  prod:
+    name: Prod
+    needs: dev
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/bicep-stage.yml
+    with:
+      environment: prod
+      resource-group: ${{ vars.PROD_RESOURCE_GROUP }}

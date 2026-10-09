@@ -1,0 +1,131 @@
+name: Terraform stage
+
+# Reusable stage called by deploy-terraform.yml: plan -> approval -> apply the saved plan.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment and tfvars file name (environments/<environment>.tfvars)
+        type: string
+        required: true
+      resource-group:
+        description: Existing resource group to deploy into
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  # The service principal only has resource-group scoped roles.
+  ARM_SKIP_PROVIDER_REGISTRATION: "true"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_resource_group_name: ${{ inputs.resource-group }}
+  ENVIRONMENT: ${{ inputs.environment }}
+  TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+  TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+  TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+  # The saved plan contains a state snapshot (which can include storage keys),
+  # so it is encrypted before being stored as an artifact.
+  TF_PLAN_ENCRYPTION_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check configuration
+        run: |
+          missing=0
+          for name in ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID TF_VAR_resource_group_name \
+                      TF_STATE_RESOURCE_GROUP TF_STATE_STORAGE_ACCOUNT TF_STATE_CONTAINER TF_PLAN_ENCRYPTION_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name is empty. Set the matching GitHub variable or secret (see README.md)."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: terraform
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Terraform init (remote state)
+        run: |
+          set -euo pipefail
+          printf 'terraform {\n  backend "azurerm" {}\n}\n' > backend_override.tf
+          terraform init -lockfile=readonly \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=iac-demo-$ENVIRONMENT.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Terraform plan
+        run: |
+          set -euo pipefail
+          terraform plan -var-file="environments/$ENVIRONMENT.tfvars" -out=tfplan
+          {
+            echo "### Terraform plan: $ENVIRONMENT (\`$TF_VAR_resource_group_name\`)"
+            echo '```'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Encrypt plan
+        run: openssl enc -aes-256-cbc -pbkdf2 -salt -in tfplan -out tfplan.enc -pass env:TF_PLAN_ENCRYPTION_KEY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: tfplan.enc
+          retention-days: 7
+          if-no-files-found: error
+
+  apply:
+    name: Apply
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: terraform
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Terraform init (remote state)
+        run: |
+          set -euo pipefail
+          printf 'terraform {\n  backend "azurerm" {}\n}\n' > backend_override.tf
+          terraform init -lockfile=readonly \
+            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=$TF_STATE_CONTAINER" \
+            -backend-config="key=iac-demo-$ENVIRONMENT.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Decrypt plan
+        run: openssl enc -d -aes-256-cbc -pbkdf2 -in tfplan.enc -out tfplan -pass env:TF_PLAN_ENCRYPTION_KEY
+
+      # Terraform refuses a stale plan if the state changed after the review.
+      - name: Terraform apply
+        run: terraform apply tfplan

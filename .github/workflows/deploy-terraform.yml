@@ -1,43 +1,26 @@
 name: Deploy Terraform
 
-# Manually triggered pipeline for iac-demo/terraform-comparison.
-# Run "Deploy Bicep" first: it creates the resource group (and, with the declarative
-# template, the storage account) that this Terraform configuration then takes over.
+# Validate once, then promote the same artifact through dev and prod.
+# Each stage runs terraform plan, waits for approval (GitHub environment protection
+# rules), then applies exactly the reviewed plan. Configuration lives in GitHub
+# variables and one secret; see README.md.
 on:
   workflow_dispatch:
-    inputs:
-      action:
-        description: Plan only, or plan and apply
-        type: choice
-        default: plan
-        options:
-          - plan
-          - apply
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
-  group: iac-demo-azure
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
-defaults:
-  run:
-    shell: bash
-    working-directory: iac-demo/terraform-comparison
-
 jobs:
-  terraform:
-    name: Terraform ${{ inputs.action }}
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    env:
-      ARM_USE_OIDC: "true"
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ARM_SKIP_PROVIDER_REGISTRATION: "true"
-      TF_IN_AUTOMATION: "true"
+    defaults:
+      run:
+        working-directory: iac-demo/terraform-comparison
     steps:
       - uses: actions/checkout@v4
 
@@ -46,58 +29,44 @@ jobs:
           terraform_version: 1.9.8
           terraform_wrapper: false
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      # State is not persisted between runs in this demo, so an existing storage
-      # account is imported on every run. Use a remote backend for real workloads.
-      - name: Prepare import block
-        run: |
-          set -euo pipefail
-          resource_group=$(sed -n 's/^\s*resource_group_name\s*=\s*"\(.*\)".*/\1/p' main.tf | head -n1)
-          account_name=$(sed -n 's/^\s*name\s*=\s*"\(.*\)".*/\1/p' main.tf | head -n1)
-          echo "Resource group: $resource_group"
-          echo "Storage account: $account_name"
-
-          if [[ "$(az group exists --name "$resource_group")" != "true" ]]; then
-            echo "::error::Resource group '$resource_group' does not exist. Run the 'Deploy Bicep' pipeline first."
-            exit 1
-          fi
-
-          account_id=$(az storage account show --resource-group "$resource_group" --name "$account_name" --query id --output tsv 2>/dev/null || true)
-          if [[ -n "$account_id" ]]; then
-            echo "Importing existing storage account: $account_id"
-            sed -i "s|^\(\s*id\s*=\s*\)\".*\"|\1\"$account_id\"|" import.tf
-            cat import.tf
-          else
-            echo "Storage account not found; Terraform will create it (import block skipped for this run)."
-            rm import.tf
-          fi
-
       - name: Terraform fmt
         run: terraform fmt -check -recursive
 
-      - name: Terraform init
-        run: terraform init -input=false
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false -input=false -lockfile=readonly
 
       - name: Terraform validate
         run: terraform validate
 
-      - name: Terraform plan
-        run: |
-          set -euo pipefail
-          terraform plan -input=false -out=tfplan
-          {
-            echo '### Terraform plan'
-            echo '```'
-            terraform show -no-color tfplan
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terraform
+          path: |
+            iac-demo/terraform-comparison
+            !iac-demo/terraform-comparison/.terraform
+          include-hidden-files: true
+          if-no-files-found: error
 
-      - name: Terraform apply
-        if: inputs.action == 'apply'
-        run: terraform apply -input=false tfplan
+  dev:
+    name: Dev
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-stage.yml
+    with:
+      environment: dev
+      resource-group: ${{ vars.DEV_RESOURCE_GROUP }}
+    secrets: inherit
+
+  prod:
+    name: Prod
+    needs: dev
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-stage.yml
+    with:
+      environment: prod
+      resource-group: ${{ vars.PROD_RESOURCE_GROUP }}
+    secrets: inherit
