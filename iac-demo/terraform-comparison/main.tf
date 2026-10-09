@@ -9,9 +9,4 @@ resource "azurerm_storage_account" "demo" {
   https_traffic_only_enabled = true
   min_tls_version            = "TLS1_2"
   tags                       = var.environment == null ? {} : { environment = var.environment }
-
-  # Flip access_tier to "Cool" (variable default or a tfvars file), then run
-  # terraform plan / terraform apply live. This previews/applies a desired-state
-  # change. To show drift detection, change the tier in Azure instead, then plan
-  # to reconcile it with this configuration.
 }

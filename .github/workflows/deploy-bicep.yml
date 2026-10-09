@@ -3,8 +3,14 @@ name: Deploy Bicep
 # Build once, then promote the same artifact through dev and prod.
 # Each stage runs what-if, waits for approval (GitHub environment protection rules),
 # then deploys. Configuration lives in GitHub variables; see README.md.
+# Runs automatically when a PR is merged into main (after its bicep-pr-preview.yml
+# review), or on demand via workflow_dispatch.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'iac-demo/**'
 
 permissions:
   contents: read

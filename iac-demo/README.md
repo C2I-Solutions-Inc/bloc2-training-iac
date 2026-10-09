@@ -1,44 +1,11 @@
-# IaC learning progression
+# Progression d'apprentissage IaC
 
-These examples focus on resource groups and storage accounts:
+Ces exemples portent sur les groupes de ressources et les comptes de stockage :
 
-1. **Imperative** — `imperative.azcli` creates resources through ordered commands.
-2. **Idempotent** — repeat `idempotent.azcli` to see the same resource group reused.
-3. **Declarative** — `declarative.bicep` describes the desired storage account state.
-4. **Benefits** — `benefits.bicep` adds parameters, validation, deterministic naming with `uniqueString(resourceGroup().id)`, and useful outputs.
-5. **Environments** — `environments.bicep` reuses one template with dev/test/prod settings; `vars/` supplies dev and prod parameters.
-6. **Modules** — `module-example/main.bicep` creates a resource group at subscription scope and composes the resource-group-scoped storage module.
-7. **Terraform comparison** — compare the equivalent storage resource, preview changes with `plan`, apply them, and import an existing account into Terraform state.
-
-## Try the examples
-
-Use Azure CLI with Bicep installed, an Azure sign-in (`az login`), and your chosen subscription (`az account set --subscription <subscription-id>`). Run the following from this folder in Bash:
-
-```bash
-bash imperative.azcli
-bash idempotent.azcli
-az deployment group create --resource-group rg-iac-demo --template-file declarative.bicep
-az deployment group create --resource-group rg-iac-demo --template-file benefits.bicep
-az deployment group create --resource-group rg-iac-demo --parameters vars/dev.bicepparam
-az deployment group create --resource-group rg-iac-demo --parameters vars/prod.bicepparam
-az deployment sub create --location canadacentral --template-file module-example/main.bicep --parameters warehouseCode=demo
-```
-
-Replace the hardcoded `stbloc2demo2026` name in the CLI, declarative, and Terraform examples with your own globally available name. Storage names must be 3–24 lowercase letters or digits; use lowercase alphanumeric prefixes and alphanumeric warehouse codes. `uniqueString` produces a stable 13-character suffix to avoid typical cross-resource-group collisions, but global availability is still checked by Azure, not mathematically guaranteed.
-
-The examples are alternative approaches, not one combined deployment. Use separate resource groups for dev and prod in a real environment. Deploying multiple storage templates into the same group creates additional accounts. Deployments can incur charges.
-
-### Terraform (1.7 or newer)
-
-The resource group must already exist. The defaults in `variables.tf` describe a single `stbloc2demo2026` account in `rg-iac-demo`; `environments/*.tfvars` hold the dev and prod settings used by the pipeline. To import an existing account, align the variables with the account's name, group, location, and settings, then pass its ID (from the Azure CLI command in `import.tf`) with `-var 'import_storage_account_id=<resource-id>'`. Without that variable nothing is imported, so for a new account just choose an unused name.
-
-```bash
-cd terraform-comparison
-terraform init
-terraform plan
-terraform apply
-```
-
-Flip `access_tier` to `"Cool"` (for example `terraform plan -var access_tier=Cool`) to preview a configuration change. To demonstrate **drift**, change the tier outside Terraform, then run `terraform plan` to show how Terraform would restore the declared tier. Keep Terraform state local for this demo and do not commit it; it can contain sensitive values.
-
-After the session, delete only the demo resource groups you created to avoid ongoing charges.
+1. **Impératif** — `imperative.azcli` crée des ressources via une séquence de commandes ordonnées.
+2. **Idempotent** — relancer `idempotent.azcli` montre que le même groupe de ressources est réutilisé.
+3. **Déclaratif** — `declarative.bicep` décrit l'état souhaité du compte de stockage.
+4. **Avantages** — `benefits.bicep` ajoute des paramètres, de la validation, un nommage déterministe avec `uniqueString(resourceGroup().id)`, ainsi que des sorties (outputs) utiles.
+5. **Environnements** — `environments.bicep` réutilise un même modèle avec des réglages dev/test/prod ; `vars/` fournit les paramètres pour dev et prod.
+6. **Modules** — `module-example/main.bicep` crée un groupe de ressources au niveau de l'abonnement et compose le module de stockage à portée groupe de ressources.
+7. **Comparaison Terraform** — compare la ressource de stockage équivalente, prévisualise les changements avec `plan`, les applique, et importe un compte existant dans l'état Terraform.

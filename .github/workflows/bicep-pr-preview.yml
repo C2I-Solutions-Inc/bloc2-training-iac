@@ -1,0 +1,83 @@
+name: Bicep PR preview
+
+# Runs on every pull request targeting main: lints/builds the Bicep files and
+# posts a dev what-if preview as a sticky PR comment, so reviewers see the
+# predicted change before approving. This never deploys anything; the actual
+# dev/prod deployment runs from deploy-bicep.yml once the PR is merged.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'iac-demo/**'
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: bicep-pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: What-if (dev)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: iac-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: Lint and build all Bicep files
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            echo "Linting $file"
+            az bicep lint --file "$file"
+            az bicep build --file "$file" --stdout > /dev/null
+          done < <(find . -name '*.bicep' | sort)
+
+      - name: Compile template and dev parameters
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bicep"
+          az bicep build --file environments.bicep --outfile "$RUNNER_TEMP/bicep/environments.json"
+          az bicep build-params --file vars/dev.bicepparam --outfile "$RUNNER_TEMP/bicep/dev.parameters.json"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: What-if (dev)
+        run: |
+          set -euo pipefail
+          az deployment group what-if \
+            --resource-group "${{ vars.DEV_RESOURCE_GROUP }}" \
+            --template-file "$RUNNER_TEMP/bicep/environments.json" \
+            --parameters "@$RUNNER_TEMP/bicep/dev.parameters.json" \
+            | tee "$RUNNER_TEMP/what-if.txt"
+
+      - name: Post what-if as PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "<!-- bicep-what-if-dev -->"
+            echo "### Bicep what-if: dev (\`${{ vars.DEV_RESOURCE_GROUP }}\`)"
+            echo "_Updated for commit \`${{ github.event.pull_request.head.sha }}\`_"
+            echo '```'
+            sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/what-if.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file "$RUNNER_TEMP/comment.md" \
+            --edit-last \
+            --create-if-none
