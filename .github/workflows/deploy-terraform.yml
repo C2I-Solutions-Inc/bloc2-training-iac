@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: iac-demo/terraform-comparison
+        working-directory: iac-demo/terraform
     steps:
       - uses: actions/checkout@v4
 
@@ -42,8 +42,8 @@ jobs:
         with:
           name: terraform
           path: |
-            iac-demo/terraform-comparison
-            !iac-demo/terraform-comparison/.terraform
+            iac-demo/terraform
+            !iac-demo/terraform/.terraform
           include-hidden-files: true
           if-no-files-found: error
 

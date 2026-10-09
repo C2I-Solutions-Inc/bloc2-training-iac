@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bicep"
           az bicep build --file environments.bicep --outfile "$RUNNER_TEMP/bicep/environments.json"
-          az bicep build-params --file vars/dev.bicepparam --outfile "$RUNNER_TEMP/bicep/dev.parameters.json"
+          az bicep build-params --file bicep/vars/dev.bicepparam --outfile "$RUNNER_TEMP/bicep/dev.parameters.json"
 
       - name: Azure login (OIDC)
         uses: azure/login@v2

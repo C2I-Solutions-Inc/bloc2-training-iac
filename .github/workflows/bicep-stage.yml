@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: GitHub environment and parameter file name (vars/<environment>.bicepparam)
+        description: GitHub environment and parameter file name (bicep/vars/<environment>.bicepparam)
         type: string
         required: true
       resource-group:
