@@ -1,0 +1,13 @@
+# IMPERATIVE: a sequence of steps executed in order.
+az group create --name rg-iac-demo --location canadacentral
+
+# Replace this globally unique name with your own before running.
+az storage account create \
+  --resource-group rg-iac-demo \
+  --name stbloc2demo2026 \
+  --location canadacentral \
+  --sku Standard_LRS \
+  --kind StorageV2 \
+  --access-tier Hot \
+  --https-only true \
+  --min-tls-version TLS1_2

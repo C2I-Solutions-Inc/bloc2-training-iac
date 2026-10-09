@@ -1,0 +1,2 @@
+# IDEMPOTENCY: re-running this exact command produces the same result without errors or duplication.
+az group create --name rg-iac-demo --location canadacentral
