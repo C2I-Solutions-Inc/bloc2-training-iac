@@ -1,6 +1,9 @@
-name: Terraform stage
+name: Terraform apply
 
-# Reusable stage called by deploy-terraform.yml: plan -> approval -> apply the saved plan.
+# Reusable stage called by deploy-terraform.yml: applies exactly the
+# previously reviewed plan for a given environment. Gated by that
+# environment's required-reviewer approval (GitHub environment protection
+# rules).
 on:
   workflow_call:
     inputs:
@@ -36,66 +39,8 @@ env:
   TF_PLAN_ENCRYPTION_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
 
 jobs:
-  plan:
-    name: Plan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check configuration
-        run: |
-          missing=0
-          for name in ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID TF_VAR_resource_group_name \
-                      TF_STATE_RESOURCE_GROUP TF_STATE_STORAGE_ACCOUNT TF_STATE_CONTAINER TF_PLAN_ENCRYPTION_KEY; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::$name is empty. Set the matching GitHub variable or secret (see README.md)."
-              missing=1
-            fi
-          done
-          exit "$missing"
-
-      - uses: actions/download-artifact@v4.3.0
-        with:
-          name: terraform
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.9.8
-          terraform_wrapper: false
-
-      - name: Terraform init (remote state)
-        run: |
-          set -euo pipefail
-          printf 'terraform {\n  backend "azurerm" {}\n}\n' > backend_override.tf
-          terraform init -lockfile=readonly \
-            -backend-config="resource_group_name=$TF_STATE_RESOURCE_GROUP" \
-            -backend-config="storage_account_name=$TF_STATE_STORAGE_ACCOUNT" \
-            -backend-config="container_name=$TF_STATE_CONTAINER" \
-            -backend-config="key=iac-demo-$ENVIRONMENT.tfstate" \
-            -backend-config="use_azuread_auth=true"
-
-      - name: Terraform plan
-        run: |
-          set -euo pipefail
-          terraform plan -var-file="environments/$ENVIRONMENT.tfvars" -out=tfplan
-          {
-            echo "### Terraform plan: $ENVIRONMENT (\`$TF_VAR_resource_group_name\`)"
-            echo '```'
-            terraform show -no-color tfplan
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Encrypt plan
-        run: openssl enc -aes-256-cbc -pbkdf2 -salt -in tfplan -out tfplan.enc -pass env:TF_PLAN_ENCRYPTION_KEY
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}
-          path: tfplan.enc
-          retention-days: 7
-          if-no-files-found: error
-
   apply:
     name: Apply
-    needs: plan
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:

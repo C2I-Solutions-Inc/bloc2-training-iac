@@ -1,9 +1,10 @@
 name: Deploy Terraform
 
-# Validate once, then promote the same artifact through dev and prod.
-# Each stage runs terraform plan, waits for approval (GitHub environment protection
-# rules), then applies exactly the reviewed plan. Configuration lives in GitHub
-# variables and one secret; see README.md.
+# Validate once, then plan dev and prod in parallel, then promote the same
+# artifact through dev and prod applies. Dev apply waits for both plans so
+# reviewers see the full picture before approving; prod apply only starts
+# after dev has applied. Configuration lives in GitHub variables and one
+# secret; see README.md.
 on:
   workflow_dispatch:
 
@@ -47,25 +48,49 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-  dev:
-    name: Dev
+  plan-dev:
+    name: Plan (dev)
     needs: build
     permissions:
       contents: read
       id-token: write
-    uses: ./.github/workflows/terraform-stage.yml
+    uses: ./.github/workflows/terraform-plan.yml
     with:
       environment: dev
       resource-group: ${{ vars.DEV_RESOURCE_GROUP }}
     secrets: inherit
 
-  prod:
-    name: Prod
-    needs: dev
+  plan-prod:
+    name: Plan (prod)
+    needs: build
     permissions:
       contents: read
       id-token: write
-    uses: ./.github/workflows/terraform-stage.yml
+    uses: ./.github/workflows/terraform-plan.yml
+    with:
+      environment: prod
+      resource-group: ${{ vars.PROD_RESOURCE_GROUP }}
+    secrets: inherit
+
+  apply-dev:
+    name: Apply (dev)
+    needs: [plan-dev, plan-prod]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-apply.yml
+    with:
+      environment: dev
+      resource-group: ${{ vars.DEV_RESOURCE_GROUP }}
+    secrets: inherit
+
+  apply-prod:
+    name: Apply (prod)
+    needs: apply-dev
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-apply.yml
     with:
       environment: prod
       resource-group: ${{ vars.PROD_RESOURCE_GROUP }}
